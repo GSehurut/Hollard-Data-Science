@@ -22,7 +22,7 @@ print("Step 1: Exploratory Data Analysis")
 print("="*40)
 
 # Loading the data to inspect the different variables associated with the target variable
-df = pd.read_csv('data/data.csv')
+df = pd.read_csv('data.csv')
 
 print(f"Total rows before drop: {df.shape[0]}")
 print(f"Total rows after drop: {df.dropna().shape[0]}")
