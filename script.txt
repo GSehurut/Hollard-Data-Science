@@ -1,0 +1,261 @@
+# Importing the required libraries.
+import pandas as pd
+import numpy as np
+from scipy.stats import skew
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+import warnings
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import roc_curve, auc
+from imblearn.over_sampling import SMOTE
+from sklearn.linear_model import LogisticRegression
+import xgboost as xgb
+
+# Suppress warnings
+warnings.filterwarnings("ignore")
+
+# Step 1: Exploratory Data Analysis
+print("\n" + "="*40)
+print("Step 1: Exploratory Data Analysis")
+print("="*40)
+
+# Loading the data to inspect the different variables associated with the target variable
+df = pd.read_csv('data/data.csv')
+
+print(f"Total rows before drop: {df.shape[0]}")
+print(f"Total rows after drop: {df.dropna().shape[0]}")
+print(f"Percentage of rows dropped: {100 * (1 - df.dropna().shape[0] / df.shape[0]):.2f}%")
+
+# Because more than 5% of the data would be missing if we dropped NAs, imputation will be used instead.
+df.info()
+
+missing_values = df.isnull().sum()
+print(f'Missing values in the dataset: {missing_values}')
+
+# Step 2: Handling Missing Values
+print("\n" + "="*40)
+print("Step 2: Handling Missing Values")
+print("="*40)
+
+# Filling missing values in the 'Garden' column with the mode, since there is only 7 values missing unlikely to distort the data
+df['Garden'].fillna(df['Garden'].mode()[0], inplace=True)
+
+# Handling missing values for the 'Building Dimension' column
+# First we visualize the distribution of the data
+building_dimension_clean = df['Building Dimension'].dropna()
+plt.figure(figsize=(10,5))
+sns.histplot(building_dimension_clean, bins=50, kde=True, color='blue')
+plt.title("Distribution of Building Dimension")
+plt.xlabel("Building Dimension (m²)")
+plt.ylabel("Frequency")
+plt.grid(True)
+plt.show()
+
+# Plot box plot to check for outliers
+plt.figure(figsize=(8,4))
+sns.boxplot(x=building_dimension_clean, color='orange')
+plt.title("Box Plot of Building Dimension")
+plt.xlabel("Building Dimension (m²)")
+plt.show()
+
+# Calculate skewness
+skewness = skew(building_dimension_clean)
+print(f"Skewness: {skewness:.2f}")
+
+# The Building Dimension column is right skewed, we can fill the missing values with the median
+# The median is used because it is not affected by outliers unlike the mean
+df['Building Dimension'].fillna(df['Building Dimension'].median(), inplace=True)
+
+# Handling missing values for the 'Date_of_Occupancy' column
+# Convert 'Date_of_Occupancy' to year and fill missing values with the median year
+df['Date_of_Occupancy'] = pd.to_datetime(df['Date_of_Occupancy'], errors='coerce').dt.year
+df['Date_of_Occupancy'].fillna(df['Date_of_Occupancy'].median(), inplace=True)
+df['Date_of_Occupancy'] = df['Date_of_Occupancy'].astype(int)
+
+# A new value for unknown geocodes is created and then the column is encoded to ensure it pass through the model
+df['Geo_Code'].fillna('Unknown', inplace=True)
+df['Geo_Code'] = df['Geo_Code'].astype('category').cat.codes  # Encode the variable as integer for machine learning.
+
+# Handle the Number of windows column
+# Convert `.` to NaN
+df['NumberOfWindows'] = df['NumberOfWindows'].replace('.', np.nan)
+
+# Handle entries `>= 10` by replacing them with a value 10
+df['NumberOfWindows'] = df['NumberOfWindows'].replace('>= 10', 10)
+
+# Convert the column to numeric
+df['NumberOfWindows'] = pd.to_numeric(df['NumberOfWindows'], errors='coerce')
+
+# We then fill the missing values, with the median
+# Again this is because median is not affected by outliers.
+df['NumberOfWindows'].fillna(df['NumberOfWindows'].median(), inplace=True)
+
+
+# We now drop the 'Customer Id' column since it is not useful for modelling
+df.drop(columns=['Customer Id'], inplace=True)
+
+# Step 3: Encoding the Categorical Variables
+print("\n" + "="*40)
+print("Step 3: Encoding the Categorical Variables")
+print("="*40)
+
+# Initialize LabelEncoder
+le = LabelEncoder()
+
+# Apply Label Encoding to each column
+df['Residential'] = le.fit_transform(df['Residential'])
+df['Building_Painted'] = le.fit_transform(df['Building_Painted'])
+df['Building_Fenced'] = le.fit_transform(df['Building_Fenced'])
+df['Garden'] = le.fit_transform(df['Garden'])
+df['Settlement'] = le.fit_transform(df['Settlement'])
+df['Settlement'] = le.fit_transform(df['Settlement'])
+
+# Split the data into features and target
+X = df.drop(columns=['Claim'])
+y = df['Claim']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Step 4: Handling the Target Variable Imbalance
+print("\n" + "="*40)
+print("Step 4: Handling the Target Variable Imbalance")
+print("="*40)
+
+# In this step, we address the imbalance in the target variable, `Claim`. We use the Synthetic Minority Over-sampling Technique (SMOTE) to balance the class distribution.
+# Check the class distribution of the target variable, Claims
+class_distribution = df['Claim'].value_counts(normalize=True)
+print(class_distribution)
+
+class_distribution.plot(kind='bar',color=['blue', 'red'])
+plt.title('Class Distribution of Target Variable: Claim')
+plt.xlabel('Claim (0: No, 1: Yes)')
+plt.ylabel('Proportion')
+plt.xticks(rotation=0)
+plt.show()
+
+# Initialize SMOTE
+smote = SMOTE(random_state=42)
+X_train_smote, y_train_smote = smote.fit_resample(X_train, y_train)
+
+print("Original class distribution (before SMOTE):")
+print(y_train.value_counts(normalize=True))
+
+print("\nClass distribution after SMOTE:")
+print(y_train_smote.value_counts(normalize=True))
+
+# Logistic Regression
+print("\n" + "="*40)
+print("Logistic Regression")
+print("="*40)
+
+# In this section, we train a Logistic Regression model to predict the target variable `Claim`. 
+# Train a Logistic Regression model
+log_reg = LogisticRegression(random_state=42)
+log_reg.fit(X_train_smote, y_train_smote)
+
+# Predict probabilities on both training and test sets
+y_train_prob = log_reg.predict_proba(X_train_smote)[:, 1]
+y_test_prob = log_reg.predict_proba(X_test)[:, 1]
+
+# Compute ROC curve and AUC for training and test sets
+fpr_train, tpr_train, _ = roc_curve(y_train_smote, y_train_prob)  # Use y_train_smote
+fpr_test, tpr_test, _ = roc_curve(y_test, y_test_prob)
+
+roc_auc_train = auc(fpr_train, tpr_train)
+roc_auc_test = auc(fpr_test, tpr_test)
+
+# Plot the ROC curves
+plt.figure(figsize=(8, 6))
+plt.plot(fpr_train, tpr_train, color='blue', lw=2, label=f'Train ROC curve (AUC = {roc_auc_train:.2f})')
+plt.plot(fpr_test, tpr_test, color='red', lw=2, label=f'Test ROC curve (AUC = {roc_auc_test:.2f})')
+plt.plot([0, 1], [0, 1], color='black', linestyle='--')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('LOGREG - Receiver Operating Characteristic (ROC) Curve')
+plt.legend(loc='lower right')
+plt.show()
+
+# Print the AUC for both train and test sets
+print(f"AUC for Train Set: {roc_auc_train:.2f}")
+print(f"AUC for Test Set: {roc_auc_test:.2f}")
+
+# Random Forest Classifier
+print("\n" + "="*40)
+print("Random Forest Classifier")
+print("="*40)
+
+# Given the relatively low AUC for Logistic Regression, we will attempt to use a Random Forest Classifier to improve the model's performance.
+# Initialize Random Forest Classifier
+rf_clf = RandomForestClassifier(random_state=42, n_estimators=100, max_depth=10)
+
+# Fit the model on the training data
+rf_clf.fit(X_train_smote, y_train_smote)
+
+# Predict probabilities on both training and test sets
+y_train_prob = rf_clf.predict_proba(X_train_smote)[:, 1]
+y_test_prob = rf_clf.predict_proba(X_test)[:, 1]
+
+fpr_train, tpr_train, _ = roc_curve(y_train_smote, y_train_prob)
+fpr_test, tpr_test, _ = roc_curve(y_test, y_test_prob)
+
+roc_auc_train = auc(fpr_train, tpr_train)
+roc_auc_test = auc(fpr_test, tpr_test)
+
+# Plot the ROC curves
+plt.figure(figsize=(8, 6))
+plt.plot(fpr_train, tpr_train, color='blue', lw=2, label=f'Train ROC curve (AUC = {roc_auc_train:.2f})')
+plt.plot(fpr_test, tpr_test, color='red', lw=2, label=f'Test ROC curve (AUC = {roc_auc_test:.2f})')
+plt.plot([0, 1], [0, 1], color='black', linestyle='--')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('RF - Receiver Operating Characteristic (ROC) Curve')
+plt.legend(loc='lower right')
+plt.show()
+
+# Print the AUC for both train and test sets
+print(f"AUC for Train Set: {roc_auc_train:.2f}")
+print(f"AUC for Test Set: {roc_auc_test:.2f}")
+
+# XGBoost Classifier
+print("\n" + "="*40)
+print("XGBoost Classifier")
+xgb_clf = xgb.XGBClassifier(random_state=42, n_estimators=100, max_depth=10, eval_metric='logloss')
+
+# In this section, we attempt to use an XGBoost Classifier to improve the model's performance.
+# Initialize XGBoost Classifier
+xgb_clf = xgb.XGBClassifier(random_state=42, n_estimators=100, max_depth=10, use_label_encoder=False, eval_metric='logloss')
+
+# Fit the model on the training data
+xgb_clf.fit(X_train_smote, y_train_smote)
+
+# Predict probabilities on both training and test sets
+y_train_prob = xgb_clf.predict_proba(X_train_smote)[:, 1]
+y_test_prob = xgb_clf.predict_proba(X_test)[:, 1]
+
+fpr_train, tpr_train, _ = roc_curve(y_train_smote, y_train_prob)
+fpr_test, tpr_test, _ = roc_curve(y_test, y_test_prob)
+
+roc_auc_train = auc(fpr_train, tpr_train)
+roc_auc_test = auc(fpr_test, tpr_test)
+
+# Plot the ROC curves
+plt.figure(figsize=(8, 6))
+plt.plot(fpr_train, tpr_train, color='blue', lw=2, label=f'Train ROC curve (AUC = {roc_auc_train:.2f})')
+plt.plot(fpr_test, tpr_test, color='red', lw=2, label=f'Test ROC curve (AUC = {roc_auc_test:.2f})')
+plt.plot([0, 1], [0, 1], color='black', linestyle='--')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('XGB - Receiver Operating Characteristic (ROC) Curve')
+plt.legend(loc='lower right')
+plt.show()
+
+# Print the AUC for both train and test sets
+print(f"AUC for Train Set: {roc_auc_train:.2f}")
+print(f"AUC for Test Set: {roc_auc_test:.2f}")
+
+# Conclusion 
+print("\n" + "="*40)
+print("Conclusion")
+print("="*40)
+print("Among the classifiers evaluated, the Random Forest Classifier achieved the highest AUC score, indicating that it is the best performing model for this dataset based on the ROC curve analysis.")
